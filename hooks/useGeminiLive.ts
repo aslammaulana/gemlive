@@ -62,19 +62,31 @@ export const useGeminiLive = () => {
     setTranscriptionHistory([]);
 
     try {
-      // Ambil seluruh history dari database (untuk konteks AI)
-      const { data: historyData, error: historyError } = await supabase
-        .from('natasha')
-        .select('role, text')
-        .order('created_at', { ascending: true });
+
+       // 1️⃣ Ambil history dari memory.json (server API)
+    let manualMemory: { role: string; text: string }[] = [];
+    try {
+      const res = await fetch("/api/memory");
+      if (res.ok) manualMemory = await res.json();
+    } catch (e) {
+      console.warn("Gagal memuat memory.json:", e);
+    }
+
+       // 2️⃣ Ambil history dari database
+    const { data: dbHistory, error: historyError } = await supabase
+      .from("natasha")
+      .select("role, text")
+      .order("created_at", { ascending: true });
+
 
       if (historyError) console.error("Error fetching history:", historyError);
 
-      const recentHistory = (historyData || [])
-        .map((msg: { role: string; text: string }) =>
-          `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`
-        )
-        .join("\n");
+      
+      // 3️⃣ Gabungkan memory.json + database
+    const allHistory = [...(manualMemory || []), ...(dbHistory || [])];
+    const recentHistory = allHistory
+      .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`)
+      .join("\n");
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
