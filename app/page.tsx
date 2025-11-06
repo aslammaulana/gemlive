@@ -55,7 +55,7 @@ const HomePage: React.FC = () => {
             className="bg-red-600 hover:bg-red-500 disabled:bg-gray-600 disabled:cursor-not-allowed"
           >
             <FaStopCircle  />
-            Stop Conversation
+            Stop
           </ControlButton>
         </div>
       </footer>
