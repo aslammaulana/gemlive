@@ -63,7 +63,7 @@ export const useGeminiLive = () => {
     setTranscriptionHistory([]);
 
     if (!process.env.GEMINI_API_KEY) {
-      setError("API key is not set. Please create a .env.local file and add NEXT_PUBLIC_API_KEY.");
+      setError("API key is not set. Please create a .env.local file and add GEMINI_API_KEY.");
       setConnectionState(ConnectionState.ERROR);
       return;
     }
