@@ -1,14 +1,12 @@
-
 import { useState, useRef, useCallback } from 'react';
-// FIX: Removed LiveSession from this import as it's not an exported member of the module.
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
 import { ConnectionState, ConversationTurn } from '@/types';
 import { createBlob, decode, decodeAudioData } from '../utils/audio';
+import { supabase } from '@/lib/supabaseClient'; // pastikan file ini ada
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 
-// FIX: Added a local interface for LiveSession since it is not exported from the SDK.
 interface LiveSession {
   close: () => void;
   sendRealtimeInput: (input: { media: Blob }) => void;
@@ -69,6 +67,21 @@ export const useGeminiLive = () => {
     }
 
     try {
+      // --- Ambil 15 percakapan terakhir dari database ---
+      const { data: historyData, error: historyError } = await supabase
+        .from('natasha')
+        .select('role, text')
+        .order('created_at', { ascending: true })
+        .limit(15);
+
+      if (historyError) console.error("Error fetching history:", historyError);
+
+      const recentHistory = (historyData || [])
+        .map((msg: { role: string; text: string }) =>
+          `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`
+        )
+        .join("\n");
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
@@ -86,7 +99,11 @@ export const useGeminiLive = () => {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },
-          systemInstruction: 'You are a friendly and helpful assistant. Your responses should be concise and conversational.',
+          systemInstruction: `
+            You are a friendly and helpful assistant.
+            Continue the conversation naturally based on this context:
+            ${recentHistory}
+          `,
         },
         callbacks: {
           onopen: () => {
@@ -99,30 +116,31 @@ export const useGeminiLive = () => {
             scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
               const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
               const pcmBlob: Blob = createBlob(inputData);
-              sessionPromise.then((session) => {
-                session.sendRealtimeInput({ media: pcmBlob });
-              }).catch(e => console.error("Error sending audio data:", e));
+              sessionPromise
+                .then((session) => session.sendRealtimeInput({ media: pcmBlob }))
+                .catch(e => console.error("Error sending audio data:", e));
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(inputAudioContextRef.current!.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.outputTranscription) {
+            if (message.serverContent?.outputTranscription)
               currentOutputTranscription.current += message.serverContent.outputTranscription.text;
-            }
-            if (message.serverContent?.inputTranscription) {
+
+            if (message.serverContent?.inputTranscription)
               currentInputTranscription.current += message.serverContent.inputTranscription.text;
-            }
 
             if (message.serverContent?.turnComplete) {
               const fullInput = currentInputTranscription.current.trim();
               const fullOutput = currentOutputTranscription.current.trim();
+
               setTranscriptionHistory(prev => {
                 const newHistory = [...prev];
                 if (fullInput) newHistory.push({ speaker: 'user', text: fullInput });
                 if (fullOutput) newHistory.push({ speaker: 'model', text: fullOutput });
                 return newHistory;
               });
+
               currentInputTranscription.current = '';
               currentOutputTranscription.current = '';
             }
