@@ -2,7 +2,8 @@ import { useState, useRef, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
 import { ConnectionState, ConversationTurn } from '@/types';
 import { createBlob, decode, decodeAudioData } from '../utils/audio';
-import { supabase } from '@/lib/supabaseClient'; // pastikan file ini ada
+import { supabase } from '@/lib/supabaseClient';
+import { getApiKey, switchApiKey } from '@/lib/apiKeys'; // tambahkan ini
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -60,19 +61,12 @@ export const useGeminiLive = () => {
     setConnectionState(ConnectionState.CONNECTING);
     setTranscriptionHistory([]);
 
-    if (!process.env.NEXT_PUBLIC_API_KEY) {
-      setError("API key is not set. Please create a .env.local file and add NEXT_PUBLIC_API_KEY.");
-      setConnectionState(ConnectionState.ERROR);
-      return;
-    }
-
     try {
-      // --- Ambil 15 percakapan terakhir dari database ---
+      // Ambil seluruh history dari database (untuk konteks AI)
       const { data: historyData, error: historyError } = await supabase
         .from('natasha')
         .select('role, text')
-        .order('created_at', { ascending: true })
-        .limit(15);
+        .order('created_at', { ascending: true });
 
       if (historyError) console.error("Error fetching history:", historyError);
 
@@ -85,109 +79,125 @@ export const useGeminiLive = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_API_KEY });
+      // --- Gunakan API key dengan fallback otomatis ---
+      let apiKey = getApiKey();
+      let ai = new GoogleGenAI({ apiKey });
 
-      inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: INPUT_SAMPLE_RATE });
-      outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
+      const initSession = async () => {
+        const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: INPUT_SAMPLE_RATE });
+        const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
+        inputAudioContextRef.current = inputCtx;
+        outputAudioContextRef.current = outputCtx;
 
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-        config: {
-          responseModalities: [Modality.AUDIO],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+        const sessionPromise = ai.live.connect({
+          model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+          config: {
+            responseModalities: [Modality.AUDIO],
+            inputAudioTranscription: {},
+            outputAudioTranscription: {},
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+            },
+            systemInstruction: `
+              You are a friendly and helpful assistant.
+              Continue the conversation naturally based on this context:
+              ${recentHistory}
+            `,
           },
-          systemInstruction: `
-            You are a friendly and helpful assistant.
-            Continue the conversation naturally based on this context:
-            ${recentHistory}
-          `,
-        },
-        callbacks: {
-          onopen: () => {
-            setConnectionState(ConnectionState.CONNECTED);
-            const source = inputAudioContextRef.current!.createMediaStreamSource(streamRef.current!);
-            mediaStreamSourceRef.current = source;
-            const scriptProcessor = inputAudioContextRef.current!.createScriptProcessor(4096, 1, 1);
-            scriptProcessorRef.current = scriptProcessor;
+          callbacks: {
+            onopen: () => {
+              setConnectionState(ConnectionState.CONNECTED);
+              const source = inputCtx.createMediaStreamSource(streamRef.current!);
+              mediaStreamSourceRef.current = source;
+              const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
+              scriptProcessorRef.current = scriptProcessor;
 
-            scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
-              const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-              const pcmBlob: Blob = createBlob(inputData);
-              sessionPromise
-                .then((session) => session.sendRealtimeInput({ media: pcmBlob }))
-                .catch(e => console.error("Error sending audio data:", e));
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(inputAudioContextRef.current!.destination);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            if (message.serverContent?.outputTranscription)
-              currentOutputTranscription.current += message.serverContent.outputTranscription.text;
+              scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+                const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                const pcmBlob: Blob = createBlob(inputData);
+                sessionPromise
+                  .then((session) => session.sendRealtimeInput({ media: pcmBlob }))
+                  .catch(e => console.error("Error sending audio data:", e));
+              };
+              source.connect(scriptProcessor);
+              scriptProcessor.connect(inputCtx.destination);
+            },
+            onmessage: async (message: LiveServerMessage) => {
+              if (message.serverContent?.outputTranscription)
+                currentOutputTranscription.current += message.serverContent.outputTranscription.text;
 
-            if (message.serverContent?.inputTranscription)
-              currentInputTranscription.current += message.serverContent.inputTranscription.text;
+              if (message.serverContent?.inputTranscription)
+                currentInputTranscription.current += message.serverContent.inputTranscription.text;
 
-            if (message.serverContent?.turnComplete) {
-              const fullInput = currentInputTranscription.current.trim();
-              const fullOutput = currentOutputTranscription.current.trim();
+              if (message.serverContent?.turnComplete) {
+                const fullInput = currentInputTranscription.current.trim();
+                const fullOutput = currentOutputTranscription.current.trim();
 
-              setTranscriptionHistory(prev => {
-                const newHistory = [...prev];
-                if (fullInput) newHistory.push({ speaker: 'user', text: fullInput });
-                if (fullOutput) newHistory.push({ speaker: 'model', text: fullOutput });
-                return newHistory;
-              });
+                setTranscriptionHistory(prev => {
+                  const newHistory = [...prev];
+                  if (fullInput) newHistory.push({ speaker: 'user', text: fullInput });
+                  if (fullOutput) newHistory.push({ speaker: 'model', text: fullOutput });
+                  return newHistory;
+                });
 
-              currentInputTranscription.current = '';
-              currentOutputTranscription.current = '';
-            }
-
-            const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && outputAudioContextRef.current) {
-              nextStartTime.current = Math.max(nextStartTime.current, outputAudioContextRef.current.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContextRef.current, OUTPUT_SAMPLE_RATE, 1);
-              const sourceNode = outputAudioContextRef.current.createBufferSource();
-              sourceNode.buffer = audioBuffer;
-              sourceNode.connect(outputAudioContextRef.current.destination);
-              sourceNode.addEventListener('ended', () => audioSources.current.delete(sourceNode));
-              sourceNode.start(nextStartTime.current);
-              nextStartTime.current += audioBuffer.duration;
-              audioSources.current.add(sourceNode);
-            }
-
-            if (message.serverContent?.interrupted) {
-              for (const sourceNode of audioSources.current.values()) {
-                sourceNode.stop();
-                audioSources.current.delete(sourceNode);
+                currentInputTranscription.current = '';
+                currentOutputTranscription.current = '';
               }
-              nextStartTime.current = 0;
-            }
-          },
-          onerror: (e: any) => {
-            const errorMessage = e?.message || 'An unknown error occurred';
-            console.error('Gemini Live API Error:', e);
-            setError(`Connection failed: ${errorMessage}`);
-            setConnectionState(ConnectionState.ERROR);
-            cleanup();
-          },
-          onclose: () => {
-            cleanup();
-            setConnectionState(state => state === ConnectionState.ERROR ? ConnectionState.ERROR : ConnectionState.DISCONNECTED);
-          },
-        },
-      });
 
-      sessionPromise.then(session => {
-        sessionRef.current = session;
-      }).catch(e => {
-        console.error('Failed to establish session:', e);
-        setError(`Failed to establish session: ${e.message}`);
-        setConnectionState(ConnectionState.ERROR);
-        cleanup();
-      });
+              const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+              if (base64Audio && outputAudioContextRef.current) {
+                nextStartTime.current = Math.max(nextStartTime.current, outputAudioContextRef.current.currentTime);
+                const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContextRef.current, OUTPUT_SAMPLE_RATE, 1);
+                const sourceNode = outputAudioContextRef.current.createBufferSource();
+                sourceNode.buffer = audioBuffer;
+                sourceNode.connect(outputAudioContextRef.current.destination);
+                sourceNode.addEventListener('ended', () => audioSources.current.delete(sourceNode));
+                sourceNode.start(nextStartTime.current);
+                nextStartTime.current += audioBuffer.duration;
+                audioSources.current.add(sourceNode);
+              }
+
+              if (message.serverContent?.interrupted) {
+                for (const sourceNode of audioSources.current.values()) {
+                  sourceNode.stop();
+                  audioSources.current.delete(sourceNode);
+                }
+                nextStartTime.current = 0;
+              }
+            },
+            onerror: async (e: any) => {
+              const errorMessage = e?.message || 'Unknown error';
+              console.error('Gemini Live API Error:', errorMessage);
+
+              if (errorMessage.includes("429") || errorMessage.includes("500")) {
+                const newKey = switchApiKey();
+                console.warn(`Retrying with new API key: ${newKey}`);
+                ai = new GoogleGenAI({ apiKey: newKey });
+                await initSession(); // coba ulang
+              } else {
+                setError(`Connection failed: ${errorMessage}`);
+                setConnectionState(ConnectionState.ERROR);
+                cleanup();
+              }
+            },
+            onclose: () => {
+              cleanup();
+              setConnectionState(state => state === ConnectionState.ERROR ? ConnectionState.ERROR : ConnectionState.DISCONNECTED);
+            },
+          },
+        });
+
+        sessionPromise.then(session => {
+          sessionRef.current = session;
+        }).catch(e => {
+          console.error('Failed to establish session:', e);
+          setError(`Failed to establish session: ${e.message}`);
+          setConnectionState(ConnectionState.ERROR);
+          cleanup();
+        });
+      };
+
+      await initSession();
 
     } catch (err: any) {
       console.error('Failed to start conversation:', err);
