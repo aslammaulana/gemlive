@@ -63,30 +63,30 @@ export const useGeminiLive = () => {
 
     try {
 
-       // 1️⃣ Ambil history dari memory.json (server API)
-    let manualMemory: { role: string; text: string }[] = [];
-    try {
-      const res = await fetch("/api/memory");
-      if (res.ok) manualMemory = await res.json();
-    } catch (e) {
-      console.warn("Gagal memuat memory.json:", e);
-    }
+      // 1️⃣ Ambil history dari memory.json (server API)
+      let manualMemory: { role: string; text: string }[] = [];
+      try {
+        const res = await fetch("/api/memory");
+        if (res.ok) manualMemory = await res.json();
+      } catch (e) {
+        console.warn("Gagal memuat memory.json:", e);
+      }
 
-       // 2️⃣ Ambil history dari database
-    const { data: dbHistory, error: historyError } = await supabase
-      .from("natasha")
-      .select("role, text")
-      .order("created_at", { ascending: true });
+      // 2️⃣ Ambil history dari database
+      const { data: dbHistory, error: historyError } = await supabase
+        .from("natasha")
+        .select("role, text")
+        .order("created_at", { ascending: true });
 
 
       if (historyError) console.error("Error fetching history:", historyError);
 
-      
+
       // 3️⃣ Gabungkan memory.json + database
-    const allHistory = [...(manualMemory || []), ...(dbHistory || [])];
-    const recentHistory = allHistory
-      .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`)
-      .join("\n");
+      const allHistory = [...(manualMemory || []), ...(dbHistory || [])];
+      const recentHistory = allHistory
+        .map((msg) => `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`)
+        .join("\n");
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -108,7 +108,7 @@ export const useGeminiLive = () => {
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Gacrux' } },
             },
             systemInstruction: `
               You are a friendly and helpful assistant.
@@ -145,6 +145,7 @@ export const useGeminiLive = () => {
                 const fullInput = currentInputTranscription.current.trim();
                 const fullOutput = currentOutputTranscription.current.trim();
 
+                // Simpan ke state frontend
                 setTranscriptionHistory(prev => {
                   const newHistory = [...prev];
                   if (fullInput) newHistory.push({ speaker: 'user', text: fullInput });
@@ -152,10 +153,29 @@ export const useGeminiLive = () => {
                   return newHistory;
                 });
 
+                // Simpan ke database Supabase
+                try {
+                  if (fullInput) {
+                    await supabase.from("natasha").insert({
+                      role: "user",
+                      text: fullInput,
+                    });
+                  }
+                  if (fullOutput) {
+                    await supabase.from("natasha").insert({
+                      role: "assistant",
+                      text: fullOutput,
+                    });
+                  }
+                } catch (dbError) {
+                  console.error("Gagal menyimpan percakapan:", dbError);
+                }
+
                 currentInputTranscription.current = '';
                 currentOutputTranscription.current = '';
               }
 
+              // --- Audio playback tetap sama ---
               const base64Audio = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
               if (base64Audio && outputAudioContextRef.current) {
                 nextStartTime.current = Math.max(nextStartTime.current, outputAudioContextRef.current.currentTime);
@@ -177,6 +197,7 @@ export const useGeminiLive = () => {
                 nextStartTime.current = 0;
               }
             },
+
             onerror: async (e: any) => {
               const errorMessage = e?.message || 'Unknown error';
               console.error('Gemini Live API Error:', errorMessage);
