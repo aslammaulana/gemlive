@@ -11,16 +11,16 @@ import { supabase } from "@/lib/supabaseClient";
 
 // Fungsi mendeteksi nomor API key aktif
 const detectActiveKey = () => {
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY3) return "K-3";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY2) return "K-2";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY1) return "K-1";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY10) return "K-10";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY4) return "K-4";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY5) return "K-5";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY6) return "K-6";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY7) return "K-7";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY8) return "K-8";
-  if (process.env.NEXT_PUBLIC_GEMINI_API_KEY9) return "K-9";
+  if (process.env.NEXT_PUBLIC_API_KEY3) return "K-3";
+  if (process.env.NEXT_PUBLIC_API_KEY2) return "K-2";
+  if (process.env.NEXT_PUBLIC_API_KEY1) return "K-1";
+  if (process.env.NEXT_PUBLIC_API_KEY10) return "K-10";
+  if (process.env.NEXT_PUBLIC_API_KEY4) return "K-4";
+  if (process.env.NEXT_PUBLIC_API_KEY5) return "K-5";
+  if (process.env.NEXT_PUBLIC_API_KEY6) return "K-6";
+  if (process.env.NEXT_PUBLIC_API_KEY7) return "K-7";
+  if (process.env.NEXT_PUBLIC_API_KEY8) return "K-8";
+  if (process.env.NEXT_PUBLIC_API_KEY9) return "K-9";
   return "K-?";
 };
 
