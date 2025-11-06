@@ -62,8 +62,8 @@ export const useGeminiLive = () => {
     setConnectionState(ConnectionState.CONNECTING);
     setTranscriptionHistory([]);
 
-    if (!process.env.GEMINI_API_KEY) {
-      setError("API key is not set. Please create a .env.local file and add GEMINI_API_KEY.");
+    if (!process.env.NEXT_PUBLIC_API_KEY) {
+      setError("API key is not set. Please create a .env.local file and add NEXT_PUBLIC_API_KEY.");
       setConnectionState(ConnectionState.ERROR);
       return;
     }
@@ -72,7 +72,7 @@ export const useGeminiLive = () => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_API_KEY });
 
       inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: INPUT_SAMPLE_RATE });
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
